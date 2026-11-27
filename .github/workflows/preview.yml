@@ -1,0 +1,58 @@
+# Preview for review (plan § 3) and its clean-up (plan § 4), per ADR 0003.
+# Runs rig, saves one page as one HTML file with curl, and deploys it to GitHub Pages.
+# The HTML is never committed: it exists only as this run's Pages artifact.
+#   marker=on  → banner shows LANE_MARKER (repo secret)
+#   marker=off → LANE_MARKER unset, banner reads "no marker set"; uploads over the same link
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      marker:
+        description: Show the lane marker in the banner
+        type: choice
+        options: ['on', 'off']
+        default: 'off'
+      night:
+        description: Night to preview
+        default: '2026-10-28'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm i -g pnpm@12.23.0 && pnpm install --frozen-lockfile
+      - name: Save the page as one HTML file
+        env:
+          LANE_MARKER: ${{ inputs.marker == 'on' && secrets.LANE_MARKER || '' }}
+          NIGHT: ${{ inputs.night }}
+          PORT: '8787'
+        run: |
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs localhost:8787/health >/dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -fsS "localhost:8787/digest/${NIGHT}" -o _site/index.html
+          grep -q 'no marker set' _site/index.html && echo "banner: no marker set" || echo "banner: marker shown"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+          retention-days: 1
+      - id: deploy
+        uses: actions/deploy-pages@v4
